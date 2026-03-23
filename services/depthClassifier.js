@@ -1,5 +1,6 @@
 // services/depthClassifier.js
 // Domain rules loaded from config — NOT hardcoded
+const { generateContent } = require('./geminiClient');
 
 const DOMAIN_DEPTH_RULES = {
     // ═══════════════════════════════════════════════════════════

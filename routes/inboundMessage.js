@@ -136,41 +136,6 @@ router.post('/inbound-message', async (req, res) => {
     }
 
     // Add job directly to chatWorker queue
-    // const job = await addChatJob({
-    //   tenantId,
-    //   msisdn_id: phone, // Using phone as msisdn_id
-    //   from: phone,
-    //   message,
-    //   mediaUrl
-    // })
-
-    // console.log("PAYLOAD CHAT JOBS:", {
-    //   // Tenant & session
-    //   tenantId,
-    //   session: webhookPayload.session,
-    //   // Who we are
-    //   me: webhookPayload.me.id,
-    //   // Message identity
-    //   messageId: webhookPayload.payload.id,
-    //   timestamp: webhookPayload.payload.timestamp,
-    //   // Sender info
-    //   msisdn_id: phone,
-    //   from: fromPhone,
-    //   fromMe: webhookPayload.payload.fromMe,
-    //   pushName: webhookPayload.payload._data.pushName,
-    //   // Message content
-    //   message,
-    //   mediaUrl,
-    //   mediaBase64,
-    //   mediaMimeType,
-    //   mediaGeminiResult,
-    //   hasMedia: webhookPayload.payload.hasMedia,
-    //   // Key (for reply/ack targeting)
-    //   key: webhookPayload.payload._data.key,
-    //   // Source
-    //   source: webhookPayload.payload.source,
-    // })
-
     const job = await addChatJob({
       // Tenant & session
       tenantId,

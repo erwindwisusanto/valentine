@@ -93,7 +93,11 @@ async function agentChat({ modelTier, cacheName, kbContext, dossier, history, me
     // C5 — safety filter / empty response guard (finishReason: SAFETY or empty parts)
     const candidate = data.candidates?.[0];
     if (!candidate || candidate.finishReason === 'SAFETY' || !candidate.content?.parts?.[0]?.text) {
-        throw new Error(`[agentChat] Blocked or empty response. Reason: ${candidate?.finishReason}`);
+        const err = new Error(`[agentChat] Blocked or empty response. Reason: ${candidate?.finishReason}`);
+        if (candidate?.finishReason === 'SAFETY') {
+            err.isSafety = true;
+        }
+        throw err;
     }
     return {
         text: candidate.content.parts[0].text,
@@ -140,6 +144,13 @@ async function geminiChatWithTools({ model, cacheName, userParts }) {
 
     const candidate = data.candidates[0];
 
+    // C5 — safety filter check (finishReason: SAFETY)
+    if (candidate.finishReason === 'SAFETY') {
+        const err = new Error('[geminiChatWithTools] Response blocked by safety filter');
+        err.isSafety = true;
+        throw err;
+    }
+
     // 1. Check if Gemini is requesting a tool call instead of returning text
     if (candidate.content.parts[0].functionCall) {
         const { name, args } = candidate.content.parts[0].functionCall;
@@ -177,6 +188,13 @@ async function geminiChatWithTools({ model, cacheName, userParts }) {
             console.error('[geminiChatWithTools] Invalid follow-up response structure from Gemini:');
             console.error('  Response:', JSON.stringify(d2, null, 2));
             throw new Error('[geminiChatWithTools] Gemini returned invalid follow-up response');
+        }
+
+        // C5 — safety filter check on follow-up
+        if (d2.candidates[0].finishReason === 'SAFETY') {
+            const err = new Error('[geminiChatWithTools] Follow-up response blocked by safety filter');
+            err.isSafety = true;
+            throw err;
         }
 
         // FIX: Normalize return shape to match chatWorker destructuring

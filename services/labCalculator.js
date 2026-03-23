@@ -31,10 +31,10 @@ function round2(n) { return Math.round(n * 100) / 100; }
 
 // BUG-G6 FIX: CKD-EPI 2021 race-free formula — was called but never defined → ReferenceError on every renal panel
 function ckdEpi2021(creatinine_mgdl, age, sex = 'M') {
-  const kappa = sex === 'F' ? 0.7  : 0.9;
-  const alpha = sex === 'F' ? -0.241 : -0.302;
+  const kappa = (sex === 'F' || sex === "female") ? 0.7  : 0.9;
+  const alpha = (sex === 'F' || sex === "female") ? -0.241 : -0.302;
   const scr_k = creatinine_mgdl / kappa;
-  const base  = sex === 'F' ? 1.012 : 1.0;
+  const base  = (sex === 'F' || sex === "female") ? 1.012 : 1.0;
   return round2(
     142 * Math.pow(Math.min(scr_k, 1), alpha)
         * Math.pow(Math.max(scr_k, 1), -1.200)

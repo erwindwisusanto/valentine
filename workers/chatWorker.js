@@ -17,10 +17,8 @@ const waClient = require('../services/whatsappClient');
 const redis = require('../config/redis2');
 const { getDomain } = require('../config/domains');
 
-function getDomainSafeMode(domainConfig) {
-    // Return domain-specific safe-mode message (non-technical, human-sounding)
-    return domainConfig?.safeMode?.message ||
-        `I apologize, but I'm currently unable to assist with this request. Our team will follow up with you shortly.`;
+function getDomainSafeMode(domainConfig, reason = 'technical') {
+    return domainConfig.safeMode[`${reason}Message`];
 }
 
 const geminiClient = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
@@ -111,7 +109,7 @@ const worker = new Worker(
             // FIX: reassign cacheJson, not new variable
             cacheJson = await redis.get(`${tenantId}:agent:cache_name`);
             if (!cacheJson) {
-                const safeModeMessage = getDomainSafeMode(domainConfig);
+                const safeModeMessage = getDomainSafeMode(domainConfig, 'technical');
                 await sendChunked(waClient, from, safeModeMessage);
                 await notifyAlert(tenantId, { type: 'cache_missing', job_id: job.id });
                 throw new Error('CACHE_NOT_READY');  // M2: throw not return — BullMQ retries, message not lost
@@ -183,7 +181,9 @@ const worker = new Worker(
                 ({ text, model, cachedTokens, inputTokens, outputTokens } = res);
             } catch (err) {
                 console.error('[chatWorker] geminiChatWithTools failed:', err.message);
-                const safeModeMessage = getDomainSafeMode(domainConfig);
+                // Check if this is a clinical escalation (kbRouter error or safety block)
+                const isClinical = err.fromKbRouter || err.isSafety;
+                const safeModeMessage = getDomainSafeMode(domainConfig, isClinical ? 'clinical' : 'technical');
                 await sendChunked(waClient, from, safeModeMessage);
                 await notifyAlert(tenantId, { type: 'gemini_unavailable', code: err.code, job_id: job.id });
                 await insertEscalation(tenantId, msisdnHash, 'llm_unavailable', job.id);
@@ -298,7 +298,9 @@ worker.on('failed', async (job, err) => {
         const { tenantId, from } = job.data;
         const msisdnHash = crypto.createHash('sha256').update(from).digest('hex');
         const domainConfig = getDomain(process.env.TENANT_DOMAIN);
-        const safeMsg = getDomainSafeMode(domainConfig);
+        // Clinical escalation if from kbRouter or safety block, otherwise technical
+        const isClinical = err.fromKbRouter || err.isSafety;
+        const safeMsg = getDomainSafeMode(domainConfig, isClinical ? 'clinical' : 'technical');
 
         await sendChunked(waClient, from, safeMsg);
         await insertEscalation(tenantId, msisdnHash, 'job_failed_definitive', job.id);

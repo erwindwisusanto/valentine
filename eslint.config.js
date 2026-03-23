@@ -24,7 +24,7 @@ module.exports = [
             'valid-typeof': 'error',
 
             // WARNINGS — tech debt
-            'no-console': ['warn', { allow: ['warn', 'error'] }],
+            'no-console': ['warn', { allow: ['warn', 'error', 'log'] }],
             'prefer-const': 'warn',
             'no-var': 'warn',
             'eqeqeq': ['warn', 'always'],

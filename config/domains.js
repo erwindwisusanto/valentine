@@ -20,10 +20,8 @@ const DOMAINS = {
         },
 
         safeMode: {
-            message: `I apologize, but I'm unable to provide the detailed clinical analysis your question requires. For your safety:
-                        • Contact our clinic: +62 XXX
-                        • Or visit during hours: Mon-Sat 9AM-6PM
-                        A healthcare professional will assist you.`,
+            technicalMessage: "Sorry — temporary technical issue. We'll continue shortly.",
+            clinicalMessage: "Our medical team will review and continue shortly.",
             alertType: 'clinical_escalation'
         },
 

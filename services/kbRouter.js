@@ -73,7 +73,9 @@ Apply KB_ROUTER rules. Return ONLY valid JSON: {"always_load":[],"fetch":[],"rea
     // Defensive check: validate response structure before accessing nested properties
     if (!data?.candidates?.[0]?.content?.parts?.[0]?.text) {
       console.error('[kbRouter] Unexpected API response structure:', JSON.stringify(data));
-      throw new Error('invalid_response_structure');
+      const err = new Error('invalid_response_structure');
+      err.fromKbRouter = true;
+      throw err;
     }
 
     // M6 — strip markdown fences: Flash-Lite sometimes wraps output in ```json``` even at temp=0
@@ -84,24 +86,11 @@ Apply KB_ROUTER rules. Return ONLY valid JSON: {"always_load":[],"fetch":[],"rea
     // Distinguish error types
     const isTimeout = error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT';
     const isParseError = error instanceof SyntaxError;
-    const isInvalidStructure = error.message === 'invalid_response_structure';
 
-    if (isTimeout) {
-      console.warn('[kbRouter] LLM timeout — falling back to prefilter + tag candidates');
-    } else if (isParseError) {
-      console.warn('[kbRouter] LLM returned invalid JSON — falling back');
-    } else if (isInvalidStructure) {
-      console.warn('[kbRouter] LLM returned unexpected structure — falling back');
-    } else {
-      console.error('[kbRouter] LLM API error:', error.message);
-    }
-
-    // Don't waste the prefilter work — include it in fallback
-    return {
-      always_load: [],
-      fetch: prefilterHits,  // Use the deterministic results we already computed
-      reasons: ['llm_failed', isTimeout ? 'timeout' : isParseError ? 'parse_error' : isInvalidStructure ? 'invalid_structure' : 'api_error']
-    };
+    // Clinical escalation — KB router failures require human review
+    const err = new Error(isTimeout ? 'kb_router_timeout' : isParseError ? 'kb_router_parse_error' : 'kb_router_api_error');
+    err.fromKbRouter = true;
+    throw err;
   }
 }
 

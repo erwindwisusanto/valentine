@@ -17,7 +17,7 @@ const pool = new Pool({
 async function healthCheck() {
   try {
     const res = await pool.query('SELECT 1 as result');
-    console.log('[db] PostgreSQL connected');
+    console.log('[db] PostgreSQL connected ', res.rows[0]);
     return true;
   } catch (err) {
     console.error('[db] Health check failed:', err.message);
