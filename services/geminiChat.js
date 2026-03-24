@@ -45,18 +45,31 @@ async function agentChat({ modelTier, cacheName, kbContext, dossier, history, me
                     {
                         name: "calculate_lab_ratios",
                         description: "Calculates deterministic values from user-provided data. For health: clinical ratios (HOMA-IR, TyG, eGFR). For commerce: prices, availability. MUST be called whenever deterministic computation is required.",
+                        mode: "ANY",
+                        allowedFunctionNames: ["calculate_lab_ratios"],
                         parameters: {
                             type: "OBJECT",
                             properties: {
                                 markers: {
                                     type: "OBJECT",
-                                    description: "Dictionary of extracted markers. Keys must be standardized (e.g., FBG, TG, HDL, creatinine)."
+                                    description: "Dictionary of extracted markers. Keys must be standardized (e.g., FBG, TG, HDL, creatinine).",
+                                    properties: {
+                                        FBG: { type: "INTEGER" },     // Fasting blood glucose
+                                        TG: { type: "INTEGER" },      // Triglycerides
+                                        HDL: { type: "INTEGER" },     // HDL cholesterol
+                                        LDL: { type: "INTEGER" },     // LDL cholesterol
+                                        insulin: { type: "INTEGER" }, // Fasting insulin
+                                        creatinine: { type: "INTEGER" }, // Serum creatinine
+                                        age: { type: "INTEGER" },
+                                        sex: { type: "STRING", enum: ["male", "female", "M", "F"] }
+                                    }
                                 },
                                 patient_context: {
                                     type: "OBJECT",
                                     properties: {
                                         age: { type: "INTEGER" },
-                                        sex: { type: "STRING" }
+                                        sex: { type: "STRING", enum: ["male", "female", "M", "F"] },
+                                        weight: { type: "INTEGER" }
                                     }
                                 }
                             },

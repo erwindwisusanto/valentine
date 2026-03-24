@@ -98,9 +98,31 @@ async function ensurePlatformCache(redis) {
       description: 'Calculates deterministic biomarker ratios and scores (eGFR CKD-EPI 2021, HOMA-IR, TG/HDL, LDL/HDL) from raw lab values. Always call this before interpreting renal, metabolic, or lipid panels.',
       parameters: {
         type: 'OBJECT',
+        // mode: "ANY",
+        // allowedFunctionNames: ["calculate_lab_ratios"],
         properties: {
-          markers: { type: 'OBJECT', description: 'Raw lab values keyed by biomarker name' },
-          patient_context: { type: 'OBJECT', description: 'Patient metadata: age, sex, weight_kg' }
+          markers: {
+            type: 'OBJECT',
+            description: 'Raw lab values keyed by biomarker name',
+            properties: {
+              FBG: { type: "INTEGER" },     // Fasting blood glucose
+              TG: { type: "INTEGER" },      // Triglycerides
+              HDL: { type: "INTEGER" },     // HDL cholesterol
+              LDL: { type: "INTEGER" },     // LDL cholesterol
+              insulin: { type: "INTEGER" }, // Fasting insulin
+              creatinine: { type: "INTEGER" }, // Serum creatinine
+              age: { type: "INTEGER" },
+              sex: { type: "STRING", enum: ["male", "female", "M", "F"] }
+            }
+          },
+          patient_context: {
+            type: "OBJECT",
+            properties: {
+              age: { type: "INTEGER" },
+              sex: { type: "STRING", enum: ["male", "female", "M", "F"] },
+              weight: { type: "INTEGER" }
+            }
+          }
         },
         required: ['markers']
       }
@@ -116,7 +138,7 @@ async function ensurePlatformCache(redis) {
         config: {
           systemInstruction: staticContent,
           tools: [{ functionDeclarations: [calculateLabRatiosTool] }],
-          ttl: '10800s'
+          ttl: '85000s'
         },
       });
       cacheNames[model] = cache.name;
