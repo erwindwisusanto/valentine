@@ -1,7 +1,7 @@
 // services/kbRouter.js — dual-mode routing entry point
 // Called by chatWorker BEFORE any main Gemini inference call.
 
-const axios = require('axios');
+const { generateContent } = require('./geminiClient');
 const { getIndex } = require('./kbRetriever');
 
 // ── Hard-stop trigger map (in-memory, loaded once at boot) ────────────────────
@@ -47,8 +47,9 @@ function runPrefilter(message) {
 }
 
 // ── Stage 2: LLM router — Gemini reads KB_ROUTER from cache ───────
-async function runLLMRouter(message, prefilterHits, tagCandidates, cacheName, model = 'gemini-2.5-flash') {
-  const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${process.env.GEMINI_API_KEY}`;
+async function runLLMRouter(message, prefilterHits, tagCandidates, cacheName) {
+  // Force flash-lite for routing (fast, cheap, accurate enough for routing decisions)
+  const routerModel = 'gemini-2.5-flash-lite';
   // Pass ONLY tag-matched candidates (max 30) — never the full ID list.
   // Injecting 200–500 IDs would blow the router prompt and break the "<2s" target.
   // KB_ROUTER in cache contains routing rules — the LLM needs signals, not a catalogue.
@@ -58,32 +59,38 @@ Candidate KB IDs (tag-matched, max 30): ${tagCandidates.slice(0, 30).join(', ') 
 
 Apply KB_ROUTER rules. Return ONLY valid JSON: {"always_load":[],"fetch":[],"reasons":[]}`;
 
-
-  console.log(`[kbRouter] Running LLM router with model ${model}...message: ${message}, prefilterHits: ${JSON.stringify(prefilterHits)}, tagCandidates: ${JSON.stringify(tagCandidates)}`);
-
   try {
-    const { data } = await axios.post(GEMINI_URL, {
-      cachedContent: cacheName,
+    const result = await generateContent({
+      model: routerModel,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { maxOutputTokens: 8192, temperature: 0 },
-    }, { timeout: 10000, headers: { 'Content-Type': 'application/json' } });
+      config: {
+        cachedContent: cacheName,
+        generationConfig: { maxOutputTokens: 8192, temperature: 0 }
+      }
+    });
 
-    console.log(`[kbRouter Y] ${JSON.stringify(data)}`);
-    
-    // Defensive check: validate response structure before accessing nested properties
-    if (!data?.candidates?.[0]?.content?.parts?.[0]?.text) {
-      console.error('[kbRouter] Unexpected API response structure:', JSON.stringify(data));
+    console.log(`[kbRouter] candidates:`, JSON.stringify(result.candidates, null, 2));
+
+    // Extract text from SDK response
+    const candidate = result.candidates?.[0];
+    if (!candidate?.content?.parts?.[0]?.text) {
+      console.error('[kbRouter] Unexpected SDK response structure:', JSON.stringify(result));
       const err = new Error('invalid_response_structure');
       err.fromKbRouter = true;
       throw err;
     }
 
     // M6 — strip markdown fences: Flash-Lite sometimes wraps output in ```json``` even at temp=0
-    const raw = data.candidates[0].content.parts[0].text.trim()
+    const raw = candidate.content.parts[0].text.trim()
       .replace(/^```(?:json)?\n?/, '').replace(/\n?```$/, '');
+
+    console.log(`[kbRouter] raw LLM output: ${raw}`);
+
     return JSON.parse(raw);
   } catch (error) {
     // Distinguish error types
+    console.log(`[kbRouter] Error during LLM routing:`, JSON.stringify(error));
+    
     const isTimeout = error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT';
     const isParseError = error instanceof SyntaxError;
 
@@ -96,7 +103,7 @@ Apply KB_ROUTER rules. Return ONLY valid JSON: {"always_load":[],"fetch":[],"rea
 
 // ── Entry point: called by chatWorker for every DEPTH 2 request ──────────────
 // Returns the deduplicated final set of KB IDs to load via kbRetriever.
-async function resolveKBIds(message, cacheName, model = 'gemini-2.5-flash') {
+async function resolveKBIds(message, cacheName) {
   // Stage 1 — deterministic, <5ms
   const prefilterHits = runPrefilter(message);
 
@@ -111,7 +118,7 @@ async function resolveKBIds(message, cacheName, model = 'gemini-2.5-flash') {
     .map(c => c.id);  // top candidates — slice(0,30) applied in prompt
 
   // Stage 2 — LLM finalizes (~200ms)
-  const llm = await runLLMRouter(message, prefilterHits, tagCandidates, cacheName, model);
+  const llm = await runLLMRouter(message, prefilterHits, tagCandidates, cacheName);
 
   // Stage 3 — Merge rule (source of truth)
   // Final = ALWAYS_LOAD ∪ prefilter_hits ∪ llm.always_load ∪ llm.fetch
@@ -122,7 +129,7 @@ async function resolveKBIds(message, cacheName, model = 'gemini-2.5-flash') {
     ...(llm.fetch || []),
   ]);
   console.log(`[kbRouter X] ${JSON.stringify([...finalSet])}`);
-  
+
   return [...finalSet];  // kbRetriever.loadKBFiles() resolves via index.json
 }
 

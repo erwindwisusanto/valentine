@@ -17,7 +17,7 @@ const { ai } = require('./geminiClient');
 const tenantId = process.env.TENANT_ID;
 if (!tenantId) throw new Error('[cacheSetup] TENANT_ID env var missing');
 
-const MODELS = ['gemini-2.5-flash', 'gemini-2.5-pro'];
+const MODELS = ['gemini-2.5-flash', 'gemini-2.5-flash-lite', 'gemini-2.5-pro'];
 
 const LOCK_KEY = `${tenantId}:agent:cache_lock`;
 const CACHE_KEY = `${tenantId}:agent:cache_name`;
@@ -92,35 +92,35 @@ async function ensurePlatformCache(redis) {
     // 3. Build new caches for both models
     console.log('[CACHE] Hash changed — rebuilding for both models');
 
-    // Tools must be included in cache for use with cachedContent
+    const cacheNames = {};
+
+    // Tool declaration for calculate_lab_ratios
     const calculateLabRatiosTool = {
       name: 'calculate_lab_ratios',
-      description: 'Calculates deterministic biomarker ratios and scores (eGFR CKD-EPI 2021, HOMA-IR, TG/HDL, LDL/HDL) from raw lab values. Always call this before interpreting renal, metabolic, or lipid panels.',
+      description: 'Calculates deterministic biomarker ratios and scores from raw lab values. ONLY call this function when you need to calculate eGFR, HOMA-IR, TG/HDL, or other lab ratios.',
       parameters: {
         type: 'OBJECT',
-        // mode: "ANY",
-        // allowedFunctionNames: ["calculate_lab_ratios"],
         properties: {
           markers: {
             type: 'OBJECT',
             description: 'Raw lab values keyed by biomarker name',
             properties: {
-              FBG: { type: "INTEGER" },     // Fasting blood glucose
-              TG: { type: "INTEGER" },      // Triglycerides
-              HDL: { type: "INTEGER" },     // HDL cholesterol
-              LDL: { type: "INTEGER" },     // LDL cholesterol
-              insulin: { type: "INTEGER" }, // Fasting insulin
-              creatinine: { type: "INTEGER" }, // Serum creatinine
-              age: { type: "INTEGER" },
-              sex: { type: "STRING", enum: ["male", "female", "M", "F"] }
+              FBG: { type: 'INTEGER' },
+              TG: { type: 'INTEGER' },
+              HDL: { type: 'INTEGER' },
+              LDL: { type: 'INTEGER' },
+              insulin: { type: 'INTEGER' },
+              creatinine: { type: 'INTEGER' },
+              age: { type: 'INTEGER' },
+              sex: { type: 'STRING', enum: ['male', 'female', 'M', 'F'] }
             }
           },
           patient_context: {
-            type: "OBJECT",
+            type: 'OBJECT',
             properties: {
-              age: { type: "INTEGER" },
-              sex: { type: "STRING", enum: ["male", "female", "M", "F"] },
-              weight: { type: "INTEGER" }
+              age: { type: 'INTEGER' },
+              sex: { type: 'STRING', enum: ['male', 'female', 'M', 'F'] },
+              weight: { type: 'INTEGER' }
             }
           }
         },
@@ -128,21 +128,21 @@ async function ensurePlatformCache(redis) {
       }
     };
 
-    const cacheNames = {};
-
     // Build cache for each model in parallel
     await Promise.all(MODELS.map(async (model) => {
       console.log(`[CACHE] Creating cache for ${model}...`);
+      const isRouter = model === 'gemini-2.5-flash-lite';
       const cache = await ai.caches.create({
         model,
         config: {
           systemInstruction: staticContent,
-          tools: [{ functionDeclarations: [calculateLabRatiosTool] }],
+          // Only include tools for inference models, NOT router
+          ...(!isRouter && { tools: [{ functionDeclarations: [calculateLabRatiosTool] }] }),
           ttl: '85000s'
         },
       });
       cacheNames[model] = cache.name;
-      console.log(`[CACHE] Cache created for ${model}:`, cache.name);
+      console.log(`[CACHE] Cache created for ${model} (tools: ${!isRouter}):`, cache.name);
     }));
 
     // 4. Atomic swap — write name + hash in single Redis transaction

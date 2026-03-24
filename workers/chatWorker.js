@@ -128,8 +128,9 @@ const worker = new Worker(
         }
         if (modelTier === 'pro') {
             const geminiModel = modelTier === 'pro' ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
-            const cacheName = cacheNames[geminiModel];
-            const relevant = loadKBFiles(await resolveKBIds(message, cacheName, geminiModel));
+            // Always use flash-lite cache for KB routing (cheaper, fast enough for routing)
+            const cacheName = cacheNames['gemini-2.5-flash-lite'];
+            const relevant = loadKBFiles(await resolveKBIds(message, cacheName));
             kbContext += formatKBContext(relevant);
             retrievedIds = [...new Set([...retrievedIds, ...relevant.map(p => p.id)])];
         }
@@ -169,6 +170,8 @@ const worker = new Worker(
                     ...(mediaGeminiResult ? [{ text: `MEDIA ANALYSIS:\n${mediaGeminiResult}` }] : []),
                     ...(resolvedMediaBase64 ? [{ inlineData: { mimeType: resolvedMediaMimeType, data: resolvedMediaBase64 } }] : [])
                 ];
+                // console.log(`[chatWorker] Calling geminiChatWithTools with modelTier=${modelTier}, userParts:`, userParts);
+                
                 // FIX: Convert tier to actual Gemini model ID
                 const geminiModel = modelTier === 'pro' ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
                 // Select the correct cache for this model
@@ -292,6 +295,7 @@ const worker = new Worker(
 
 worker.on('failed', async (job, err) => {
     console.error(`[WORKER] Job ${job.id} failed definitively:`, err.message);
+    console.error(`[WORKER] Job attempts: ${job?.attemptsMade}, error:`, err);
 
     // v8.1: Send safe-mode message when all retries exhausted — user must never be left hanging
     try {
@@ -302,9 +306,11 @@ worker.on('failed', async (job, err) => {
         const isClinical = err.fromKbRouter || err.isSafety;
         const safeMsg = getDomainSafeMode(domainConfig, isClinical ? 'clinical' : 'technical');
 
+        console.log(`[WORKER] Sending safe mode message to ${from}:`, safeMsg);
         await sendChunked(waClient, from, safeMsg);
         await insertEscalation(tenantId, msisdnHash, 'job_failed_definitive', job.id);
         await notifyAlert(tenantId, { type: 'job_failed', reason: err.message, job_id: job.id });
+        console.log(`[WORKER] Safe mode message sent successfully for job ${job.id}`);
     } catch (failedErr) {
         console.error('[WORKER] Failed to send safe-mode message:', failedErr.message);
     }

@@ -9,11 +9,7 @@ const redis = require('../config/redis2');
 const agentQueue = new Queue('agent-chat-jobs', {
   connection: redis,
   defaultJobOptions: {
-    attempts: 3,
-    backoff: {
-      type: 'exponential',
-      delay: 1000  // 1s, 2s, 4s
-    },
+    attempts: 1,  // No retries — fail fast and notify user
     removeOnComplete: 100,  // Keep last 100 completed jobs
     removeOnFail: 50        // Keep last 50 failed jobs
   }
