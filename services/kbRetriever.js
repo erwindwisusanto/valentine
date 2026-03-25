@@ -25,7 +25,19 @@ function getIndex() {
 // Repo root = directory of this file (services/) → one level up (declared above)
 
 function get(id) {
-  const entry = getIndex().get(id);
+  // Try exact match first
+  let entry = getIndex().get(id);
+
+  // Case-insensitive fallback: KB files may reference uppercase IDs (e.g., "10_AUTONOMIC_VAGAL")
+  // but index.json stores them in lowercase (e.g., "10_autonomic_vagal")
+  if (!entry) {
+    const lowercaseId = id.toLowerCase();
+    entry = getIndex().get(lowercaseId);
+    if (entry) {
+      console.log(`[kbRetriever] Converted uppercase ID "${id}" to lowercase "${lowercaseId}"`);
+    }
+  }
+
   if (!entry) { console.warn(`[kbRetriever] id not found in index: ${id}`); return null; }
   // entry.filepath is relative to repo root (e.g. "kb/json/32_iv_ivc_high_dose_v3.json")
   const abs = path.resolve(REPO_ROOT, entry.filepath);
@@ -42,9 +54,11 @@ const MAX_KB_CHARS = 120_000;      // ~30k tokens at ~4 chars/token
 
 function loadKBFiles(fileIds) {
   if (!fileIds?.length) return [];
-  const loaded = fileIds.slice(0, MAX_KB_FILES).map(get).filter(Boolean);
-  if (fileIds.length > MAX_KB_FILES)
-    console.warn(`[kbRetriever] capped at ${MAX_KB_FILES} files (requested ${fileIds.length})`);
+  // Deduplicate by lowercase to handle case variations (e.g., "10_AUTONOMIC_VAGAL" vs "10_autonomic_vagal")
+  const uniqueIds = Array.from(new Set(fileIds.map(id => id.toLowerCase())));
+  const loaded = uniqueIds.slice(0, MAX_KB_FILES).map(id => get(id)).filter(Boolean);
+  if (uniqueIds.length > MAX_KB_FILES)
+    console.warn(`[kbRetriever] capped at ${MAX_KB_FILES} files (requested ${uniqueIds.length})`);
   // Total chars guard
   let chars = 0;
   return loaded.filter(f => {

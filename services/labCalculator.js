@@ -1,7 +1,6 @@
 // services/labCalculator.js
 function calculateLabRatios(markers, context = {}) {
   console.log(`[LabCalculator] Calculating ratios for markers:`, markers);
-  console.log(`[LabCalculator] Context:`, context);
 
   const results = {};
 
@@ -19,11 +18,14 @@ function calculateLabRatios(markers, context = {}) {
   }
 
   // eGFR — CKD-EPI 2021 race-free (KDIGO 2021) — ckdEpi2021 defined below calculateLabRatios
-  if (markers.creatinine && context.age) {
-    results.eGFR = ckdEpi2021(markers.creatinine, context.age, context.sex);
+  if (markers.creatinine && markers.age) {
+    results.eGFR = ckdEpi2021(markers.creatinine, markers.age, markers.sex);
   }
 
   results.computed_at = new Date().toISOString();
+
+  console.log(`[LabCalculator] Computed results:`, results);
+  
   return results;
 }
 

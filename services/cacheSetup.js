@@ -112,17 +112,10 @@ async function ensurePlatformCache(redis) {
               insulin: { type: 'INTEGER' },
               creatinine: { type: 'INTEGER' },
               age: { type: 'INTEGER' },
-              sex: { type: 'STRING', enum: ['male', 'female', 'M', 'F'] }
-            }
-          },
-          patient_context: {
-            type: 'OBJECT',
-            properties: {
-              age: { type: 'INTEGER' },
               sex: { type: 'STRING', enum: ['male', 'female', 'M', 'F'] },
               weight: { type: 'INTEGER' }
             }
-          }
+          },
         },
         required: ['markers']
       }
