@@ -138,7 +138,7 @@ async function ensurePlatformCache(redis) {
           systemInstruction: staticContent,
           // Only include tools for inference models, NOT router
           ...(!isRouter && { tools: [{ functionDeclarations: [calculateLabRatiosTool] }] }),
-          ttl: '85000s'
+          ttl: '86000s'
         },
       });
       cacheNames[model] = cache.name;
@@ -147,8 +147,8 @@ async function ensurePlatformCache(redis) {
 
     // 4. Atomic swap — write name + hash in single Redis transaction
     const multi = redis.multi();
-    multi.set(CACHE_KEY, JSON.stringify(cacheNames), 'EX', 86000);
-    multi.set(HASH_KEY, newHash, 'EX', 86000);
+    multi.set(CACHE_KEY, JSON.stringify(cacheNames), 'EX', 85000); // TTL slightly less than cache TTL to allow for refresh before expiration
+    multi.set(HASH_KEY, newHash, 'EX', 85000); // TTL slightly less than cache TTL to allow for refresh before expiration
     await multi.exec();
     console.log('[CACHE] New caches live:', cacheNames);
     return cacheNames;
