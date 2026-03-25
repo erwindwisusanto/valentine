@@ -27,6 +27,7 @@ function getIndex() {
 function get(id) {
   // Try exact match first
   let entry = getIndex().get(id);
+  let lookupId = id;
 
   // Case-insensitive fallback: KB files may reference uppercase IDs (e.g., "10_AUTONOMIC_VAGAL")
   // but index.json stores them in lowercase (e.g., "10_autonomic_vagal")
@@ -35,6 +36,31 @@ function get(id) {
     entry = getIndex().get(lowercaseId);
     if (entry) {
       console.log(`[kbRetriever] Converted uppercase ID "${id}" to lowercase "${lowercaseId}"`);
+      lookupId = lowercaseId;
+    }
+  }
+
+  // Flexible keyword search: Extract keywords (remove prefix number) and search
+  // Example: "12_GUT" → searches for IDs containing "gut"
+  // Example: "10_AUTONOMIC_VAGAL" → searches for IDs containing "autonomic" and "vagal"
+  if (!entry) {
+    // Remove prefix number (e.g., "12_" from "12_GUT")
+    const keywords = id.replace(/^\d+_/, '').toLowerCase().split('_').filter(k => k.length > 0);
+
+    if (keywords.length > 0) {
+      // Search index for entries containing all keywords
+      for (const [indexId, indexEntry] of getIndex().entries()) {
+        const indexIdLower = indexId.toLowerCase();
+        // Check if all keywords are present in the index ID
+        const allKeywordsMatch = keywords.every(kw => indexIdLower.includes(kw));
+
+        if (allKeywordsMatch) {
+          console.log(`[kbRetriever] Keyword match: "${id}" → "${indexId}" (keywords: ${keywords.join(', ')})`);
+          entry = indexEntry;
+          lookupId = indexId;
+          break;
+        }
+      }
     }
   }
 
