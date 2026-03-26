@@ -38,10 +38,9 @@ const worker = new Worker(
             mediaBase64,
             mediaMimeType,
             mediaGeminiResult,
+            mediaUsage,
             key
         } = job.data;
-
-        console.log("LOG:", key)
 
         // FIX P2: Input validation — prevent crash on malformed job data
         if (!tenantId || !from) {
@@ -89,7 +88,7 @@ const worker = new Worker(
         // FIX P1: tenantId (ex: reviv_bali) ≠ domain (ex: valentine). Use TENANT_DOMAIN env.
         const tenantDomain = process.env.TENANT_DOMAIN;
         const domainConfig = getDomain(tenantDomain);
-        const modelTier = await classifyDepth({
+        const depthResult = await classifyDepth({
             domain: tenantDomain,
             history: history
                 .filter(h => h.role !== 'system')     // F1 — exclude dossier from classifier input
@@ -98,7 +97,8 @@ const worker = new Worker(
                 .join('\n'),
             message,
             geminiClient  // C2 — was missing, caused silent TypeError → permanent flash fallback
-        }).catch(() => 'flash');
+        }).catch(() => ({ tier: 'flash', usage: { cachedTokens: 0, inputTokens: 0, outputTokens: 0 } }));
+        const modelTier = depthResult.tier;
 
         // 3. Get shared cache — now returns JSON with both model caches
         // FIX: use 'let' so we can reassign after retry
@@ -121,6 +121,10 @@ const worker = new Worker(
         const hardStopIds = runPrefilter(message);       // always run — pregnancy/G6PD/etc must load even on Flash
         let kbContext = '';
         let retrievedIds = [];
+        // Store full KB result to get both usage and latency
+        let kbRouterResult = {
+            usage: { cachedTokens: 0, inputTokens: 0, outputTokens: 0, latencyMs: 0 }
+        };
         if (hardStopIds.length) {
             const safetyFiles = loadKBFiles(hardStopIds);
             kbContext += formatKBContext(safetyFiles);
@@ -130,7 +134,9 @@ const worker = new Worker(
             const geminiModel = modelTier === 'pro' ? 'gemini-2.5-pro' : 'gemini-2.5-flash';
             // Always use flash-lite cache for KB routing (cheaper, fast enough for routing)
             const cacheName = cacheNames['gemini-2.5-flash-lite'];
-            const relevant = loadKBFiles(await resolveKBIds(message, cacheName));
+            const kbResult = await resolveKBIds(message, cacheName);
+            kbRouterResult = kbResult;  // Full result with usage, latencyMs
+            const relevant = loadKBFiles(kbResult);
             kbContext += formatKBContext(relevant);
             retrievedIds = [...new Set([...retrievedIds, ...relevant.map(p => p.id)])];
         }
@@ -143,15 +149,40 @@ const worker = new Worker(
         const savedState = await redis.get(stateKey);
 
         let text, model, cachedTokens, inputTokens, outputTokens, latencyMs, depthClassification, citedIds, citationMatch;
+        // Token breakdown by service (stored in DB as JSONB)
+        let tokenBreakdown = {
+            depthClassifier: { cachedTokens: 0, inputTokens: 0, outputTokens: 0, latencyMs: 0 },
+            kbRouter: { cachedTokens: 0, inputTokens: 0, outputTokens: 0, latencyMs: 0 },
+            mediaAnalysis: { cachedTokens: 0, inputTokens: 0, outputTokens: 0, latencyMs: 0 },
+            mainChat: { cachedTokens: 0, inputTokens: 0, outputTokens: 0, latencyMs: 0 }
+        };
 
         if (savedState) {
             // FAST-PATH RETRY — inference already done, restore state, skip Gemini call entirely
             ({
                 text, model, cachedTokens, inputTokens, outputTokens,
-                latencyMs, depthClassification, citedIds, citationMatch
+                depthClassification, citedIds, citationMatch, tokenBreakdown
             } = JSON.parse(savedState));
+            // Calculate total latency from tokenBreakdown (stored inside each service)
+            latencyMs = Object.values(tokenBreakdown).reduce((sum, s) => sum + (s.latencyMs || 0), 0);
         } else {
             // NORMAL PATH — call Gemini
+            // Track tokens and latency from depth classifier
+            tokenBreakdown.depthClassifier = { ...depthResult.usage, latencyMs: depthResult.latencyMs || 0 };
+            // Track tokens and latency from KB router
+            tokenBreakdown.kbRouter = {
+                cachedTokens: kbRouterResult.usage?.cachedTokens || 0,
+                inputTokens: kbRouterResult.usage?.inputTokens || 0,
+                outputTokens: kbRouterResult.usage?.outputTokens || 0,
+                latencyMs: kbRouterResult.latencyMs || 0
+            };
+            // Track tokens and latency from media analysis (if processed in inboundMessage)
+            tokenBreakdown.mediaAnalysis = {
+                cachedTokens: mediaUsage?.cachedTokens || 0,
+                inputTokens: mediaUsage?.inputTokens || 0,
+                outputTokens: mediaUsage?.outputTokens || 0,
+                latencyMs: mediaUsage?.latencyMs || 0
+            };
             // BUG-G13 FIX: agentChat() replaced by geminiChatWithTools() — required by Section 07.
             // agentChat() never attached the Function Declarations → the model could not
             // call calculate_lab_ratios → eGFR, HOMA-IR, and ratios were hallucinated.
@@ -180,8 +211,10 @@ const worker = new Worker(
                     throw new Error(`[chatWorker] Cache not found for model: ${geminiModel}`);
                 }
                 // tools are now in the cache - no need to pass them
-                const res = await geminiChatWithTools({ model: geminiModel, cacheName, userParts });
-                ({ text, model, cachedTokens, inputTokens, outputTokens } = res);
+                const res = await geminiChatWithTools({ model: geminiModel, cacheName, cacheNames, userParts });
+                ({ text, model, cachedTokens, inputTokens, outputTokens, latencyMs } = res);
+                // Track tokens and latency from main chat
+                tokenBreakdown.mainChat = { cachedTokens, inputTokens, outputTokens, latencyMs };
             } catch (err) {
                 console.error('[chatWorker] geminiChatWithTools failed:', err.message);
                 // Check if this is a clinical escalation (kbRouter error or safety block)
@@ -200,10 +233,16 @@ const worker = new Worker(
             citationMatch = checkCitationMatch(retrievedIds, citedIds);
             // Checkpoint: persist inference result before any mutation — idempotency guarantee
             // FIX: NX prevents race condition on concurrent retry — only first worker writes
+            // Calculate totals for backward compatibility with proper defaults
+            const totalCachedTokens = Object.values(tokenBreakdown).reduce((sum, s) => sum + (s.cachedTokens || 0), 0);
+            const totalInputTokens = Object.values(tokenBreakdown).reduce((sum, s) => sum + (s.inputTokens || 0), 0);
+            const totalOutputTokens = Object.values(tokenBreakdown).reduce((sum, s) => sum + (s.outputTokens || 0), 0);
+            // Calculate total latency from all services
+            const totalLatencyMs = Object.values(tokenBreakdown).reduce((sum, s) => sum + (s.latencyMs || 0), 0);
             const wasSet = await redis.set(stateKey,
                 JSON.stringify({
-                    text, model, cachedTokens, inputTokens, outputTokens,
-                    latencyMs, depthClassification, citedIds, citationMatch
+                    text, model, cachedTokens: totalCachedTokens, inputTokens: totalInputTokens, outputTokens: totalOutputTokens,
+                    latencyMs: totalLatencyMs, depthClassification, citedIds, citationMatch, tokenBreakdown
                 }),
                 'NX', 'EX', 3600);
 
@@ -213,8 +252,10 @@ const worker = new Worker(
                 if (existing) {
                     ({
                         text, model, cachedTokens, inputTokens, outputTokens,
-                        latencyMs, depthClassification, citedIds, citationMatch
+                        depthClassification, citedIds, citationMatch, tokenBreakdown
                     } = JSON.parse(existing));
+                    // Calculate total latency from tokenBreakdown
+                    latencyMs = Object.values(tokenBreakdown).reduce((sum, s) => sum + (s.latencyMs || 0), 0);
                 }
             }
         }
@@ -273,21 +314,30 @@ const worker = new Worker(
         }
 
         // ON CONFLICT DO NOTHING - prevents duplicate inserts on retry
+        // Calculate totals from tokenBreakdown for backward compatibility
+        const totalCachedTokens = Object.values(tokenBreakdown).reduce((sum, s) => sum + (s.cachedTokens || 0), 0);
+        const totalInputTokens = Object.values(tokenBreakdown).reduce((sum, s) => sum + (s.inputTokens || 0), 0);
+        const totalOutputTokens = Object.values(tokenBreakdown).reduce((sum, s) => sum + (s.outputTokens || 0), 0);
+        // Recalculate latency if not already set (for retry path)
+        if (!latencyMs) {
+            latencyMs = Object.values(tokenBreakdown).reduce((sum, s) => sum + (s.latencyMs || 0), 0);
+        }
         await insertChatLog({
             tenantId,
             msIsdn_id: msisdn_id,
             msisdnHash,
             model,
-            cachedTokens,
-            inputTokens,
-            outputTokens,
+            cachedTokens: totalCachedTokens,
+            inputTokens: totalInputTokens,
+            outputTokens: totalOutputTokens,
             latencyMs,
             depthClassification,
             retrievedIds,
             citedIds,
             citationMatch,
             jobId: job.id,
-            waMessageId: key.id
+            waMessageId: key.id,
+            tokenBreakdown
         });
     },
     { connection: redis, concurrency: 10, limiter: { max: 50, duration: 60000 } }

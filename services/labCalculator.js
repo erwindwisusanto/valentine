@@ -1,5 +1,5 @@
 // services/labCalculator.js
-function calculateLabRatios(markers, context = {}) {
+function calculateLabRatios(markers) {
   console.log(`[LabCalculator] Calculating ratios for markers:`, markers);
 
   const results = {};

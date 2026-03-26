@@ -12,7 +12,8 @@ const redis = new Redis(redisUrl, {
   maxRetriesPerRequest: null,       // Retry failed commands
   retryDelayOnFailover: 100,     // Wait 100ms between retries
   enableReadyCheck: true,        // Verify connection before use
-  
+  // enableOfflineQueue: true (default) - Queue commands while connecting, essential for startup
+
   // Reconnection strategy
   retryStrategy(times) {
     if (times > 10) {
@@ -21,10 +22,18 @@ const redis = new Redis(redisUrl, {
     }
     return Math.min(times * 100, 3000); // Exponential backoff, max 3s
   },
-  
+
   // Timeout settings
   connectTimeout: 10000,        // 10s connection timeout
-  commandTimeout: 10000,         // 5s per command (prevents worker hang)
+  commandTimeout: 10000,         // 10s per command (prevents worker hang)
+
+  // TCP keepalive - CRITICAL for preventing idle connection timeouts
+  // Sends keepalive probes to detect dead connections before using them
+  keepAlive: 30000,              // 30s - send keepalive probe every 30s of inactivity
+
+  // Automatic refresh of connection
+  autoResubscribe: true,         // Resubscribe to channels after reconnect
+  autoResendUnfulfilledCommands: true, // Resend commands that didn't receive reply
 });
 
 // Event handlers

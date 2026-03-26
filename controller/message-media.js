@@ -64,12 +64,25 @@ async function generateMediaContent({ mediaBase64, mimeType }) {
         }
     ]
 
+    const t0 = Date.now()
     const response = await generateContent({
         model,
         contents
     })
+    const latencyMs = Math.round(Date.now() - t0)
 
-    return response?.text || response?.candidates?.[0]?.content?.parts?.[0]?.text || null
+    const text = response?.text || response?.candidates?.[0]?.content?.parts?.[0]?.text || null
+    // Track token usage
+    const usage = response?.usageMetadata || {}
+    return {
+        text,
+        usage: {
+            cachedTokens: usage.cachedContentTokenCount || 0,
+            inputTokens: usage.promptTokenCount || 0,
+            outputTokens: usage.candidatesTokenCount || 0,
+            latencyMs
+        }
+    }
 }
 
 async function downloadAndGenerateMediaContent(url, providedMimeType = null) {
@@ -84,8 +97,10 @@ async function downloadAndGenerateMediaContent(url, providedMimeType = null) {
     })
 
     return {
-        ...downloaded,
-        geminiResult
+        mimeType: downloaded.mimeType,
+        mediaBase64: downloaded.mediaBase64,
+        geminiResult: geminiResult.text,
+        usage: geminiResult.usage
     }
 }
 

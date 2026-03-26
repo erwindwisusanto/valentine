@@ -159,9 +159,10 @@ async function insertChatLog(logData) {
       citation_match,
       job_id,
       created_at,
-      wa_message_id
+      wa_message_id,
+      token_breakdown
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), $14
+      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, NOW(), $14, $15
     )
     RETURNING *`,
     [
@@ -178,7 +179,8 @@ async function insertChatLog(logData) {
       logData.citedIds || [],     // Pass array directly for ARRAY columns
       logData.citationMatch,
       String(logData.jobId),
-      String(logData.waMessageId)
+      String(logData.waMessageId),
+      logData.tokenBreakdown ? JSON.stringify(logData.tokenBreakdown) : null
     ]
   );
   return result.rows[0];

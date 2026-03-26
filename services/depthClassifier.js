@@ -65,6 +65,7 @@ async function classifyDepth({ domain, history, message, geminiClient }) {
     const prompt = buildClassifierPrompt(domain, history, message);
 
     // FIX: 3s timeout — classifier must never block worker indefinitely
+    const t0 = Date.now();
     const result = await Promise.race([
         geminiClient.models.generateContent({
             model: 'gemini-2.5-flash-lite',
@@ -74,11 +75,24 @@ async function classifyDepth({ domain, history, message, geminiClient }) {
         new Promise((_, reject) =>
             setTimeout(() => reject(new Error('CLASSIFIER_TIMEOUT')), 3000))
     ]);
+    const latencyMs = Math.round(Date.now() - t0);
 
     const raw = result.text.trim().toUpperCase();
     console.log(`[depthClassifier] Classified as: ${raw}`);
-    
-    return raw.includes('DEPTH_2') ? 'pro' : 'flash';
+
+    // Track token usage
+    const usage = result.usageMetadata || {};
+    const classification = raw.includes('DEPTH_2') ? 'pro' : 'flash';
+
+    return {
+        tier: classification,
+        usage: {
+            cachedTokens: usage.cachedContentTokenCount || 0,
+            inputTokens: usage.promptTokenCount || 0,
+            outputTokens: usage.candidatesTokenCount || 0
+        },
+        latencyMs
+    };
 }
 
 module.exports = { classifyDepth, DOMAIN_DEPTH_RULES };

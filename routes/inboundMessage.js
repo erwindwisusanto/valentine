@@ -100,6 +100,7 @@ router.post('/inbound-message', async (req, res) => {
     let mediaBase64 = null
     let mediaMimeType = null
     let mediaGeminiResult = null
+    let mediaUsage = { cachedTokens: 0, inputTokens: 0, outputTokens: 0 }
 
     if (payload.media?.url) {
       mediaUrl = payload.media.url
@@ -113,6 +114,7 @@ router.post('/inbound-message', async (req, res) => {
         mediaBase64 = downloadedMedia?.mediaBase64 || null
         mediaMimeType = downloadedMedia?.mimeType || mediaMimeType
         mediaGeminiResult = downloadedMedia?.geminiResult || null
+        mediaUsage = downloadedMedia?.usage || { cachedTokens: 0, inputTokens: 0, outputTokens: 0, latencyMs: 0 }
       } catch (err) {
         console.warn('[WEBHOOK] Failed to download media URL:', err.message)
       }
@@ -156,6 +158,7 @@ router.post('/inbound-message', async (req, res) => {
       mediaBase64,
       mediaMimeType,
       mediaGeminiResult,
+      mediaUsage,
       hasMedia: webhookPayload.payload.hasMedia,
       // Key (for reply/ack targeting)
       key: webhookPayload.payload._data.key,

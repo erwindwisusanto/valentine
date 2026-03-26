@@ -5,14 +5,16 @@ const MAX_OUTPUT_TOKENS = 8192;
 
 // services/geminiChat.js — add geminiChatWithTools() for tool-aware calls
 // NOTE: tools are in the cache (flash/pro only), NOT in the request
-async function geminiChatWithTools({ model, cacheName, userParts }) {
+async function geminiChatWithTools({ model, cacheName, cacheNames, userParts }) {
     // DEBUG: Log request details (remove sensitive data in production)
     console.log('[geminiChatWithTools] Request details:');
     console.log('  model:', model);
     console.log('  cacheName:', cacheName);
 
     let result;
+    let totalLatencyMs = 0;
     try {
+        const t0 = Date.now();
         result = await generateContent({
             model,
             contents: [{ role: 'user', parts: userParts }],
@@ -21,6 +23,7 @@ async function geminiChatWithTools({ model, cacheName, userParts }) {
                 generationConfig: { temperature: 0.3, maxOutputTokens: MAX_OUTPUT_TOKENS }
             }
         });
+        totalLatencyMs += Math.round(Date.now() - t0);
         console.log('[geminiChatWithTools] API response received');
     } catch (e) {
         console.error('[geminiChatWithTools] Gemini API error:');
@@ -35,9 +38,8 @@ async function geminiChatWithTools({ model, cacheName, userParts }) {
         throw new Error('[geminiChatWithTools] Gemini returned invalid response (missing candidates)');
     }
 
-    console.log('[geminiChatWithTools] API response structure:');
-    console.log('  result.candidates.length:', result.candidates.length);
-    console.log('  candidate:', JSON.stringify(result.candidates[0], null, 2));
+    // console.log('[geminiChatWithTools] API response structure:');
+    // console.log('candidate:', JSON.stringify(result.candidates[0], null, 2));
 
     const candidate = result.candidates[0];
 
@@ -65,11 +67,12 @@ async function geminiChatWithTools({ model, cacheName, userParts }) {
             const { calculateLabRatios } = require('./labCalculator');
 
             let toolResult;
-            toolResult = calculateLabRatios(args.markers, args.patient_context);
+            toolResult = calculateLabRatios(args.markers);
 
             // 3. Return result to Gemini so it can draft the WhatsApp message
             let d2;
             try {
+                const t1 = Date.now();
                 d2 = await generateContent({
                     model,
                     contents: [
@@ -82,6 +85,7 @@ async function geminiChatWithTools({ model, cacheName, userParts }) {
                         generationConfig: { temperature: 0.1, maxOutputTokens: MAX_OUTPUT_TOKENS }
                     }
                 });
+                totalLatencyMs += Math.round(Date.now() - t1);
             } catch (e) {
                 console.error('[geminiChatWithTools] Follow-up API error:');
                 console.error('  Error:', JSON.stringify(e, null, 2));
@@ -102,43 +106,56 @@ async function geminiChatWithTools({ model, cacheName, userParts }) {
                 throw err;
             }
 
-            // FIX: Normalize return shape to match chatWorker destructuring
+            // FIX: Aggregate tokens from BOTH calls (initial + follow-up)
+            const usage1 = result.usageMetadata || {};
             const usage2 = d2.usageMetadata || {};
             return {
                 text: d2.candidates[0].content.parts[0].text,
                 model: model,
-                cachedTokens: usage2.cachedContentTokenCount || 0,
-                inputTokens: usage2.promptTokenCount || 0,
-                outputTokens: usage2.candidatesTokenCount || 0
+                cachedTokens: (usage1.cachedContentTokenCount || 0) + (usage2.cachedContentTokenCount || 0),
+                inputTokens: (usage1.promptTokenCount || 0) + (usage2.promptTokenCount || 0),
+                outputTokens: (usage1.candidatesTokenCount || 0) + (usage2.candidatesTokenCount || 0),
+                latencyMs: totalLatencyMs
             };
         } else {
             // Model hallucinated a function call that doesn't exist
             console.warn(`[geminiChatWithTools] Model called unknown function: ${name}`);
             console.warn(`[geminiChatWithTools] Args:`, JSON.stringify(args));
-            console.warn(`[geminiChatWithTools] Retrying with flash-lite cache (no tools)...`);
 
             // Retry with flash-lite cache (has system instruction + KB context, but NO tools)
-            const flashLiteCache = cacheName.replace(/gemini-2\.5-(flash|pro)/, 'gemini-2.5-flash-lite');
+            const flashLiteCache = cacheNames?.['gemini-2.5-flash-lite'];
+            if (!flashLiteCache) {
+                throw new Error('[geminiChatWithTools] Flash-lite cache not found in cacheNames');
+            }
+            console.warn(`[geminiChatWithTools] Retrying with flash-lite cache: ${flashLiteCache}`);
+
+            const t1 = Date.now();
             const retryResult = await generateContent({
-                model,
+                model: "models/gemini-2.5-flash-lite",
                 contents: [{ role: 'user', parts: userParts }],
                 config: {
                     cachedContent: flashLiteCache,
                     generationConfig: { temperature: 0.3, maxOutputTokens: MAX_OUTPUT_TOKENS }
                 }
             });
+            totalLatencyMs += Math.round(Date.now() - t1);
+
+            console.log(`[geminiChatWithTools] Retry result:`, JSON.stringify(retryResult, null, 2));
 
             if (!retryResult?.candidates?.[0]?.content?.parts?.[0]?.text) {
                 throw new Error('[geminiChatWithTools] Retry failed - no text response');
             }
 
-            const usage = retryResult.usageMetadata || {};
+            // FIX: Aggregate tokens from BOTH calls (initial + retry)
+            const usage1 = result.usageMetadata || {};
+            const usage2 = retryResult.usageMetadata || {};
             return {
                 text: retryResult.candidates[0].content.parts[0].text,
-                model: model,
-                cachedTokens: usage.cachedContentTokenCount || 0,
-                inputTokens: usage.promptTokenCount || 0,
-                outputTokens: usage.candidatesTokenCount || 0
+                model: "models/gemini-2.5-flash-lite",
+                cachedTokens: (usage1.cachedContentTokenCount || 0) + (usage2.cachedContentTokenCount || 0),
+                inputTokens: (usage1.promptTokenCount || 0) + (usage2.promptTokenCount || 0),
+                outputTokens: (usage1.candidatesTokenCount || 0) + (usage2.candidatesTokenCount || 0),
+                latencyMs: totalLatencyMs
             };
         }
     }
@@ -157,7 +174,8 @@ async function geminiChatWithTools({ model, cacheName, userParts }) {
         model: model,
         cachedTokens: usage.cachedContentTokenCount || 0,
         inputTokens: usage.promptTokenCount || 0,
-        outputTokens: usage.candidatesTokenCount || 0
+        outputTokens: usage.candidatesTokenCount || 0,
+        latencyMs: totalLatencyMs
     };
 }
 

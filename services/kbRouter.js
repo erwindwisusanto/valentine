@@ -60,6 +60,7 @@ Candidate KB IDs (tag-matched, max 30): ${tagCandidates.slice(0, 30).join(', ') 
 Apply KB_ROUTER rules. Return ONLY valid JSON: {"always_load":[],"fetch":[],"reasons":[]}`;
 
   try {
+    const t0 = Date.now();
     const result = await generateContent({
       model: routerModel,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
@@ -68,6 +69,7 @@ Apply KB_ROUTER rules. Return ONLY valid JSON: {"always_load":[],"fetch":[],"rea
         generationConfig: { maxOutputTokens: 8192, temperature: 0 }
       }
     });
+    const latencyMs = Math.round(Date.now() - t0);
 
     console.log(`[kbRouter] candidates:`, JSON.stringify(result.candidates, null, 2));
 
@@ -86,7 +88,16 @@ Apply KB_ROUTER rules. Return ONLY valid JSON: {"always_load":[],"fetch":[],"rea
 
     console.log(`[kbRouter] raw LLM output: ${raw}`);
 
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    // Track token usage
+    const usage = result.usageMetadata || {};
+    parsed.usage = {
+      cachedTokens: usage.cachedContentTokenCount || 0,
+      inputTokens: usage.promptTokenCount || 0,
+      outputTokens: usage.candidatesTokenCount || 0
+    };
+    parsed.latencyMs = latencyMs;
+    return parsed;
   } catch (error) {
     // Distinguish error types
     console.log(`[kbRouter] Error during LLM routing:`, JSON.stringify(error));
