@@ -9,10 +9,17 @@ app.use(express.json())
 
 // Log ALL incoming requests
 app.use((req, res, next) => {
-  // Format time in WIB (UTC+7)
-  const now = new Date()
-  const wibTime = new Date(now.getTime() + (7 * 60 * 60 * 1000))
-  const timeStr = wibTime.toISOString().replace('T', ' ').replace('Z', ' WIB')
+  // Format time in WIB (Asia/Jakarta timezone)
+  const timeStr = new Date().toLocaleString('id-ID', {
+    timeZone: 'Asia/Jakarta',
+    hour12: false,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  })
   console.log(`[${timeStr}] ${req.method} ${req.url}`)
   // console.log('Headers:', JSON.stringify(req.headers, null, 2))
   next()
