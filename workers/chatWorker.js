@@ -2,6 +2,7 @@
 const { Worker } = require('bullmq');
 const crypto = require('crypto');                         // C1 — needed for msisdnHash
 const { GoogleGenAI } = require('@google/genai'); // C2 — using new SDK
+const { ensurePlatformCache } = require('../services/cacheSetup');
 const { classifyDepth } = require('../services/depthClassifier');
 const { geminiChatWithTools } = require('../services/geminiChat');  // agentChat removed (dead code) — only geminiChatWithTools is used in worker flow
 const { resolveKBIds, runPrefilter } = require('../services/kbRouter');    // L1 — runPrefilter exported for DEPTH_0_1 hard-stops
@@ -109,10 +110,26 @@ const worker = new Worker(
             // FIX: reassign cacheJson, not new variable
             cacheJson = await redis.get(`${tenantId}:agent:cache_name`);
             if (!cacheJson) {
-                const safeModeMessage = getDomainSafeMode(domainConfig, 'technical');
-                await sendChunked(waClient, from, safeModeMessage);
-                await notifyAlert(tenantId, { type: 'cache_missing', job_id: job.id });
-                throw new Error('CACHE_NOT_READY');  // M2: throw not return — BullMQ retries, message not lost
+                // Cache still missing after wait — try to rebuild it
+                console.log(`[chatWorker] Cache missing, attempting to rebuild...`);
+                try {
+                    const cacheNames = await ensurePlatformCache(redis);
+                    console.log(`[chatWorker] Cache rebuilt successfully:`, cacheNames);
+                } catch (rebuildErr) {
+                    console.error(`[chatWorker] Cache rebuild failed:`, rebuildErr.message);
+                    const safeModeMessage = getDomainSafeMode(domainConfig, 'technical');
+                    await sendChunked(waClient, from, safeModeMessage);
+                    await notifyAlert(tenantId, { type: 'cache_missing', job_id: job.id });
+                    throw new Error('CACHE_NOT_READY');  // M2: throw not return — BullMQ retries, message not lost
+                }
+                // After rebuild, get the cache again
+                cacheJson = await redis.get(`${tenantId}:agent:cache_name`);
+                if (!cacheJson) {
+                    const safeModeMessage = getDomainSafeMode(domainConfig, 'technical');
+                    await sendChunked(waClient, from, safeModeMessage);
+                    await notifyAlert(tenantId, { type: 'cache_missing', job_id: job.id });
+                    throw new Error('CACHE_NOT_READY');
+                }
             }
         }
         const cacheNames = JSON.parse(cacheJson);
