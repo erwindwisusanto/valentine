@@ -151,7 +151,7 @@ async function geminiChatWithTools({ model, cacheName, cacheNames, userParts }) 
             const usage2 = retryResult.usageMetadata || {};
             return {
                 text: retryResult.candidates[0].content.parts[0].text,
-                model: "models/gemini-2.5-flash-lite",
+                model: "gemini-2.5-flash-lite",
                 cachedTokens: (usage1.cachedContentTokenCount || 0) + (usage2.cachedContentTokenCount || 0),
                 inputTokens: (usage1.promptTokenCount || 0) + (usage2.promptTokenCount || 0),
                 outputTokens: (usage1.candidatesTokenCount || 0) + (usage2.candidatesTokenCount || 0),
