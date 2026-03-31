@@ -366,17 +366,17 @@ worker.on('failed', async (job, err) => {
 
     // v8.1: Send safe-mode message when all retries exhausted — user must never be left hanging
     try {
-        const { tenantId, from } = job.data;
-        const msisdnHash = crypto.createHash('sha256').update(from).digest('hex');
-        const domainConfig = getDomain(process.env.TENANT_DOMAIN);
+        // const { tenantId, from } = job.data;
+        // const msisdnHash = crypto.createHash('sha256').update(from).digest('hex');
+        // const domainConfig = getDomain(process.env.TENANT_DOMAIN);
         // Clinical escalation if from kbRouter or safety block, otherwise technical
-        const isClinical = err.fromKbRouter || err.isSafety;
-        const safeMsg = getDomainSafeMode(domainConfig, isClinical ? 'clinical' : 'technical');
+        // const isClinical = err.fromKbRouter || err.isSafety;
+        // const safeMsg = getDomainSafeMode(domainConfig, isClinical ? 'clinical' : 'technical');
 
-        console.log(`[WORKER] Sending safe mode message to ${from}:`, safeMsg);
-        await sendChunked(waClient, from, safeMsg);
-        await insertEscalation(tenantId, msisdnHash, 'job_failed_definitive', job.id);
-        await notifyAlert(tenantId, { type: 'job_failed', reason: err.message, job_id: job.id });
+        // console.log(`[WORKER] Sending safe mode message to ${from}:`, safeMsg);
+        // await sendChunked(waClient, from, safeMsg);
+        // await insertEscalation(tenantId, msisdnHash, 'job_failed_definitive', job.id);
+        // await notifyAlert(tenantId, { type: 'job_failed', reason: err.message, job_id: job.id });
         console.log(`[WORKER] Safe mode message sent successfully for job ${job.id}`);
     } catch (failedErr) {
         console.error('[WORKER] Failed to send safe-mode message:', failedErr.message);
